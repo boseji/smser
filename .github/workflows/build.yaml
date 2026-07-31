@@ -1,0 +1,140 @@
+name: Build App
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # --- macOS ---
+          - name: macos-amd64
+            goos: darwin
+            goarch: amd64
+            ext: ""
+            goarm: ""
+
+          - name: macos-arm64
+            goos: darwin
+            goarch: arm64
+            ext: ""
+            goarm: ""
+
+          # --- Linux x86_64 ---
+          - name: linux-amd64
+            goos: linux
+            goarch: amd64
+            ext: ""
+            goarm: ""
+
+          # --- Windows amd64 ---
+          - name: windows-amd64
+            goos: windows
+            goarch: amd64
+            ext: ".exe"
+            goarm: ""
+
+          # --- Raspberry Pi / ARM Linux ---
+          # Pi Zero / Pi 1 (ARMv6)
+          - name: linux-armv6
+            goos: linux
+            goarch: arm
+            goarm: "6"
+            ext: ""
+
+          # Pi 2 / Pi 3 / Pi 4 (ARMv7 32-bit)
+          - name: linux-armv7
+            goos: linux
+            goarch: arm
+            goarm: "7"
+            ext: ""
+
+          # Pi 3 / Pi 4 / Pi 5 (ARM64 / aarch64)
+          - name: linux-arm64
+            goos: linux
+            goarch: arm64
+            goarm: ""
+            ext: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.26.1'
+
+      # Run tests only once (on linux-amd64) to save CI minutes
+      - name: Run Tests
+        if: matrix.name == 'linux-amd64'
+        run: go test -v ./...
+
+      - name: Build Binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: "0"  # 🔑 Pure Go — no C dependencies anywhere
+        run: |
+          set -euo pipefail
+
+          APP_NAME="$(basename "${GITHUB_REPOSITORY}")"
+          echo "App name: ${APP_NAME}"
+
+          mkdir -p dist
+
+          EXT="${{ matrix.ext }}"
+          OUT="dist/${APP_NAME}-${{ matrix.name }}${EXT}"
+
+          echo "Building for ${GOOS}/${GOARCH} ${GOARM:-} -> ${OUT}"
+
+          # -ldflags="-s -w" strips debug info (20-30% size reduction)
+          # -trimpath makes builds reproducible
+          # Replace '.' with your main package path if needed (e.g., './cmd/app')
+          go build -ldflags="-s -w" -trimpath -v -o "${OUT}" .
+
+          # Strip only works on native Linux binaries
+          if [[ "${{ matrix.goos }}" == "linux" ]]; then
+            strip "${OUT}" 2>/dev/null || true
+          fi
+
+          cp LICENSE ./dist
+          ls -lh "${OUT}"
+
+      # Each job generates its own checksum file (named uniquely to avoid collisions)
+      - name: Generate Checksum
+        if: github.event_name == 'release'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          BINARY=$(ls -1 | head -n 1)
+          sha256sum "${BINARY}" > "${BINARY}.sha256"
+          echo "Checksum for ${BINARY}:"
+          cat "${BINARY}.sha256"
+
+      - name: Upload to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            dist/*
+
+      # Preserve binaries from manual (workflow_dispatch) runs
+      - name: Upload Artifact (Non-Release)
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v7
+        with:
+          name: binaries-${{ github.event.repository.name }}-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
