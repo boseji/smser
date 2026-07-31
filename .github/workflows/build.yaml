@@ -108,11 +108,10 @@ jobs:
             strip "${OUT}" 2>/dev/null || true
           fi
 
-          cp LICENSE ./dist
           ls -lh "${OUT}"
 
       # Each job generates its own checksum file (named uniquely to avoid collisions)
-      - name: Generate Checksum
+      - name: Generate Checksum and copy License
         if: github.event_name == 'release'
         shell: bash
         run: |
@@ -122,6 +121,7 @@ jobs:
           sha256sum "${BINARY}" > "${BINARY}.sha256"
           echo "Checksum for ${BINARY}:"
           cat "${BINARY}.sha256"
+          cp LICENSE ./dist
 
       - name: Upload to GitHub Release
         if: github.event_name == 'release'
