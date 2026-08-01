@@ -31,10 +31,12 @@ import (
 func main() {
 	defaultPort := "/dev/ttyACM0"
 	defaultBaud := 115200
+	defaultEpoch := false
 
 	port := flag.String("port", defaultPort,
 		"Serial port path/name (e.g., /dev/ttyACM0 or COM3)")
 	baud := flag.Int("baud", defaultBaud, "Baud rate (e.g., 115200)")
+	epoch := flag.Bool("e", defaultEpoch, "Send time in Unix Epoch format")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(),
 			"Usage: %s [options]\n\nOptions:\n",
@@ -58,13 +60,17 @@ func main() {
 	defer p.Close()
 
 	nowUTC := time.Now().UTC()
-	iso := nowUTC.Format(time.RFC3339Nano) // e.g. 2026-07-31T12:34:56.123456789Z
+	iso := fmt.Sprintf("%d", nowUTC.Unix()) // Normally in Unix Epoch mode
+	if !*epoch {
+		iso = nowUTC.Format(time.RFC3339Nano) // e.g. 2026-07-31T12:34:56.123456789Z
+	}
 	line := "~" + iso + "\n"
 
 	if _, err := p.Write([]byte(line)); err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Println(line) // optional; remove if you want zero stdout
+	fmt.Print(line) // optional; remove if you want zero stdout
+	fmt.Printf("Sent to %q @ %d BAUD\n", *port, *baud)
 	fmt.Println("Done!")
 }
