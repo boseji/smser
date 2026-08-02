@@ -23,6 +23,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
 	serial "go.bug.st/serial"
@@ -37,6 +38,8 @@ func main() {
 		"Serial port path/name (e.g., /dev/ttyACM0 or COM3)")
 	baud := flag.Int("baud", defaultBaud, "Baud rate (e.g., 115200)")
 	epoch := flag.Bool("e", defaultEpoch, "Send time in Unix Epoch format")
+	readBack := flag.Bool("r", false, "Read back the Time in UNIX Epoch"+
+		"    This disables the set functionality. ")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(),
 			"Usage: %s [options]\n\nOptions:\n",
@@ -45,7 +48,9 @@ func main() {
 		flag.PrintDefaults()
 		fmt.Fprintln(flag.CommandLine.Output(),
 			"\nSends a single UTC ISO8601 timestamp to the serial port,"+
-				" \n  prefixed with '~', then exits.")
+				" \n  prefixed with '~', then exits."+
+				"\n For Reading back the Time in UTC Epoch it sends,"+
+				"\n '?' and then waits for receiving the 10 chars of UTC. ")
 	}
 	flag.Parse()
 
@@ -59,18 +64,51 @@ func main() {
 	}
 	defer p.Close()
 
-	nowUTC := time.Now().UTC()
-	iso := fmt.Sprintf("%d", nowUTC.Unix()) // Normally in Unix Epoch mode
-	if !*epoch {
-		iso = nowUTC.Format(time.RFC3339Nano) // e.g. 2026-07-31T12:34:56.123456789Z
-	}
-	line := "~" + iso + "\n"
+	line := ""
 
-	if _, err := p.Write([]byte(line)); err != nil {
-		log.Fatal(err)
-	}
+	// Only Enable if we are in Set Mode
+	if !*readBack {
+		nowUTC := time.Now().UTC()
+		iso := fmt.Sprintf("%d", nowUTC.Unix()) // Normally in Unix Epoch mode
+		if !*epoch {
+			iso = nowUTC.Format(time.RFC3339Nano) // e.g. 2026-07-31T12:34:56.123456789Z
+		}
+		line = "~" + iso + "\n"
 
-	fmt.Print(line) // optional; remove if you want zero stdout
-	fmt.Printf("Sent to %q @ %d BAUD\n", *port, *baud)
+		if _, err := p.Write([]byte(line)); err != nil {
+			log.Fatal(err)
+		}
+
+		fmt.Print(line) // optional; remove if you want zero stdout
+		fmt.Printf("Sent to %q @ %d BAUD\n", *port, *baud)
+	} else {
+		buf := make([]byte, 10) // Buffer to Read Back
+		// Setup The Read Timeout
+		if err := p.SetReadTimeout(1 * time.Second); err != nil {
+			log.Fatal(err)
+		}
+
+		// Send the Read Command First
+		if _, err := p.Write([]byte("?\n")); err != nil {
+			log.Fatal(err)
+		}
+
+		// Read Back the Response
+		if n, err := p.Read(buf); err != nil || n < 10 {
+			log.Fatal(err, n)
+		}
+
+		// Get the Actual Time Stamp
+		line = fmt.Sprintf("%s", buf)
+
+		// Get the Unix Time Integer
+		unix, err := strconv.ParseInt(line, 10, 64)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		t := time.Unix(unix, 0)
+		fmt.Printf("Read Back time As : %s\n", t.UTC())
+	}
 	fmt.Println("Done!")
 }
